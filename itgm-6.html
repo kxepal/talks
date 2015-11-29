@@ -1,0 +1,509 @@
+<!doctype html>
+<html lang="ru">
+
+<head>
+    <meta charset="utf-8">
+
+    <title>ITGM #6. QuickCheck в Python: проверка гипотез и поиск ошибок.</title>
+
+    <meta name="description"
+          content="Существуют две наисложнейшие проблемы в программировании:
+именование, кэширование и выход за границу массива. Проверка пограничных случаев
+поведения кода наиболее важна, но эта зона так же наименее тестируема.
+Придумать и предугадать  все возможные ситуации человеку тяжело и
+порой мы всегда что-то упускаем из виду. Вот было бы здорово, если бы
+тесты сами находили такие случаи, при которых наш код падает....Мечты?">
+    <meta name="author" content="Alexander Shorin">
+
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style"
+          content="black-translucent">
+
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, minimal-ui">
+
+    <link rel="stylesheet" href="css/reveal.css">
+    <link rel="stylesheet" href="css/serif.css" id="theme">
+
+    <!-- Code syntax highlighting -->
+    <link rel="stylesheet" href="css/zenburn.css">
+
+    <!-- Printing and PDF exports -->
+    <script>
+        var link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.type = 'text/css';
+        link.href = window.location.search.match(/print-pdf/gi) ? 'css/pdf.css' : 'css/paper.css';
+        document.getElementsByTagName('head')[0].appendChild(link);
+    </script>
+
+    <!--[if lt IE 9]>
+    <script src="js/html5shiv.js"></script>
+    <![endif]-->
+</head>
+
+<body>
+
+<div class="reveal">
+    <div class="slides">
+        <section>
+            <h2>QuickCheck в Python</h2>
+            <h4>Проверка гипотез и поиск ошибок</h4>
+
+            <p><small>
+                Шорин Александр / <a href="http://github.com/kxepal">@kxepal</a>
+            </small></p>
+        </section>
+        <section>
+            <h3>О чем пойдет речь:</h3>
+
+            <ul>
+                <li>Почему наши тесты не находят баги</li>
+                <li>Что такое QuickCheck...</li>
+                <li>...и как его неправильно портировать</li>
+                <li>Знакомство с Hypothesis</li>
+                <li>Время офигенных историй</li>
+            </ul>
+        </section>
+
+        <section>
+            <section>
+                <h3>В чем проблема наших тестов?</h3>
+            </section>
+            <section>
+                <h3>Низкое качество кода</h3>
+                <pre><code class=python data-trim>
+def test_fetch_doc_open_revs(self):
+    docid = 'docid'
+    docsatts = [({'_id': docid, '_rev': '1-ABC'}, None),
+                ({'_id': docid, '_rev': '1-CDE'}, None),
+                ({'_id': docid, '_rev': '1-EDC'}, None)]
+    revs = [doc['_rev'] for doc, _ in docsatts]
+
+    batch = yield from self.worker.fetch_doc_open_revs(...)
+    self.assertTrue(self.source.open_doc_revs.called)
+
+    args, kwargs = self.source.open_doc_revs.call_args
+    self.assertEqual((docid, revs), args[:2])
+    self.assertEqual({'atts_since': [], 'latest': True, 'revs': True},
+                     kwargs)
+    self.assertEqual(batch, list(list(zip(*docsatts))[0]))  # oh my...
+                </code></pre>
+            </section>
+            <section>
+                <h3>Километры копипасты шаблонных кейсов</h3>
+                <pre><code class=python data-trim>
+def test_attfncontlz(self):
+    params = {'filename*0': 'foo', 'filename*01': 'bar'}
+    self.assertEqual('foo', content_disposition_filename(params))
+
+def test_attfncontnc(self):
+    params = {'filename*0': 'foo', 'filename*2': 'bar'}
+    self.assertEqual('foo', content_disposition_filename(params))
+
+def test_attfnconts1(self):
+    params = {'filename*1': 'foo', 'filename*2': 'bar'}
+    self.assertEqual(None, content_disposition_filename(params))
+
+def test_attfnboth(self):
+    params = {'filename': 'foo-ae.html', 'filename*': 'foo-ä.html'}
+    self.assertEqual('foo-ä.html',content_disposition_filename(params))
+                </code></pre>
+            </section>
+            <section>
+                <h4>Мы можем решить проблему копипасты...</h4>
+                <pre><code class=python data-trim>
+@pytest.mark.parametrize(('params', 'result'), [
+    ({'filename*0': 'foo', 'filename*01': 'bar'}, 'foo'),
+    ({'filename*0': 'foo', 'filename*2': 'bar'}, 'foo'),
+    ({'filename*1': 'foo', 'filename*2': 'bar'}, None),
+    ({'filename': 'foo-ae.html', 'filename*': 'foo-ä.html'},
+     'foo-ä.html'),
+])
+def test_content_disposition_filename(params, result):
+    assert result == content_disposition_filename(params)
+                </code></pre>
+            </section>
+            <section>
+                <h4>Можем ли мы проверить все допустимые случаи?</h4>
+                <pre>
++----------------------------------------------------------------------+
+| ВЕЛИКОЕ ВСЁ                                                          |
+|                                                                      |
+|                                                                      |
+|                                                                      |
+|                                                                      |
+|                                                                      |
+|                                                                      |
+|                                                                      |
+|                                                                      |
+|                                                                      |
+|                                                +---------------------+
+|                                                | Приемлемые данные   |
+|                                                |                   Х |
++------------------------------------------------+-------------------^-+
+                                                                     |
+                                                   Наши тесты -------+
+                </pre>
+            </section>
+            <section>
+                <h3>Bug Driven Development</h3>
+                <h4>Bug. Test. Fix. Repeat.</h4>
+            </section>
+            <section>
+                <h3>Резюмируем</h3>
+                <ul>
+                    <li>Мы не тестируем наш код, мы закрепляем его поведение</li>
+                    <li>Мы не способны описать все пограничные случаи</li>
+                    <li>Баги всегда впереди нас</li>
+                </ul>
+            </section>
+            <section>
+                <h3>Решение все время было у нас перед глазами</h3>
+                <pre><code class=python data-trim>
+@asyncio.coroutine
+def exists(self, rev=None, *, auth=None):
+    """Checks if `document exists`_ in the database. Assumes success
+    on receiving response with `200 OK` status.
+
+    :param str rev: Document revision
+    :param :class:`aiocouchdb.authn.AuthProvider` auth:
+
+    :rtype: bool
+    """
+    ...
+                </code></pre>
+            </section>
+        </section>
+
+        <section>
+            <section>
+                <h3>QuickCheck</h3>
+                <ul>
+                    <li>Написан на Haskell в 1999г.</li>
+                    <li>Основывается на научно-исследовательских работах</li>
+                    <li>Позиционируется как библиотека для автоматического
+                        тестирование функций на основе спецификаций и свойств
+                        данных</li>
+                    <li>Портирован на Scala, Erlang, Clojure, JavaScript...</li>
+                    <li>Продвигается компанией Quviq</li>
+                    <li>http://www.cse.chalmers.se/~rjmh/QuickCheck/</li>
+                </ul>
+            </section>
+            <section>
+                <h3>Как оно работает (примерно)</h3>
+                <pre>
+
+               passed
+  +-----------------------+
+  v                       |
++-----------+  sample   +------+  failed   +----------+     +--------+
+| Generator | --------> | Test | --------> | Shrinker | --> | Report |
++-----------+           +------+           +----------+     +--------+
+  |                       ^       sample     |                ^
+  |                       +------------------+                |
+  |                                                           |
+  +-----------------------------------------------------------+
+                                success
+                </pre>
+            </section>
+            <section>
+                <h3>Выглядит просто?</h3>
+            </section>
+            <section>
+                <h3>НЕЛЬЗЯ ПРОСТО ВЗЯТЬ</h3>
+                <h3>И НАПИСАТЬ СВОЙ QUICKCHECK</h3>
+            </section>
+            <section>
+                <h3>Тысячи их!</h3>
+                <ul>
+                    <li>https://github.com/agrif/pyquickcheck</li>
+                    <li>https://github.com/Cue/qc</li>
+                    <li>https://github.com/dbravender/qc</li>
+                    <li>https://github.com/futoase/PyQCheck</li>
+                    <li>https://github.com/JesseBuesking/pythoncheck</li>
+                    <li>https://github.com/markchadwick/paycheck</li>
+                    <li>https://github.com/msoedov/quick.py</li>
+                    <li>https://github.com/npryce/python-factcheck</li>
+                    <li>https://github.com/Xion/pyqcy</li>
+                    <li>https://github.com/zombiecalypse/qcc</li>
+                    <li>https://pypi.python.org/pypi/pytest-quickcheck</li>
+                    <li>...</li>
+                </ul>
+            </section>
+            <section>
+                <h3>Типичные ошибки</h3>
+                <ul>
+                    <li>Слепое копирование Haskell реализации</li>
+                    <li>Использование типов в качестве генераторов</li>
+                    <li>Отсутствующий или же "глупый" shrinking</li>
+                    <li>Заброшенные или же в зачаточном состоянии</li>
+                </ul>
+            </section>
+            <section>
+                <h3>PyQCheck</h3>
+                <pre><code class=python data-trim>
+from pyqcheck import PyQCheck, Arbitrary
+
+def eq(x,y):
+  return x * y == y * x and x + y == y + x
+
+PyQCheck(verbose=True).add(
+  Arbitrary('boolean', 'boolean').property(
+    '!(x || y) == !x && !y',
+    lambda x, y: (not(x or y)) == ((not x) and (not y))
+  )
+).add(
+  Arbitrary('integer', 'integer').property(
+    'x * y == y * x and x + y == y + x', eq
+  )
+).run(10).result() # run(10) is test count == 10
+                </code></pre>
+            </section>
+        </section>
+        <section>
+            <section>
+                <h3>Hypothesis [haɪˈpɒθɪsɪs]</h3>
+                <p>Автор: David R. MacIver</p>
+                <p>https://github.com/DRMacIver/hypothesis</p>
+            </section>
+            <section>
+                <h3>Что умеет</h3>
+                <ul>
+                    <li>Генерация всех основных типов данных</li>
+                    <li>Рекурсивные типы</li>
+                    <li>State Machine тесты</li>
+                    <li>Интегрирован с Fake Factory, NumPy, Django, pytest</li>
+                    <li>Позволяет конструировать свои стратегии без погружения
+                        в детали</li>
+                </ul>
+                <br><br>
+                <h5>http://hypothesis.readthedocs.org/en/master/data.html</h5>
+            </section>
+            <section>
+                <h3>Генерация данных</h3>
+                <pre><code class=python data-trim>
+import math
+from hypothesis import strategies as st
+
+def nulls(): return st.none()
+def booleans(): return st.booleans()
+def numbers(): return st.integers() | st.floats()
+def strings(): return st.text()
+def arrays(elements): return st.lists(elements)
+def objects(elements): return st.dictionaries(strings(), elements)
+def values():
+    simple_values = nulls() | booleans() | numbers() | strings()
+    return (simple_values
+            | st.recursive(simple_values,
+                           lambda children: arrays(children)
+                                            | objects(children)))
+</code></pre>
+            </section>
+            <section>
+                <h3>Генерация данных</h3>
+                <pre><code class=python data-trim>
+>>> doc = json_st.objects(json_st.values())
+>>> doc.example()
+{'G 〙G\u202fn〙G𝞠\u202f_n( n(nn_ n': 9.943339378805967e-309}
+>>> doc.example()
+{'': None, '\x85': '', '\U00014481': None,
+'\u3000': -2.45410883359415e-309, '𒈏\x85': 1.5564453946197205e-308,
+'I': '⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃',
+'\u3000\u2029': -9.05230966734913e-309, '\U00014481\U00014481〯ⁱ': None,
+'ǋ': -1.80149788818e-311, '々〯＿': -1.414261190585428e+202,
+ '\u2029ⁱǋ': '⸃⸃⸃⸃⸃⸃⸃⸃⸃', '〯\u2029': inf, '々': '⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃',
+'\u3000＿': -1.0065151140507456e+206, 'ǋ々': None, '々ⁱ': None,
+'I\U00014481': -1.2296585975031088e+145, '\x80': '⸃⸃⸃⸃⸃',
+'\x85ⁱ𒈏\x80\x80ǋ': -6.438869672267061e+116, '𒈏〯': None,
+'\u3000\x80': None, '\u2029\x80ǋ': -698356955173.6532, '〯': '⸃⸃',
+'々\x85': None, '\x85ⁱ\U00014481': None, '＿〯': None, 'ⁱ': None,
+'＿\u3000＿': '⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃⸃'}
+                </code></pre>
+            </section>
+            <section>
+                <h3>Поиск ошибок</h3>
+                <pre><code class=python data-trim>
+>>> @given(json_st.objects(json_st.values()))
+... def test_json(doc):
+...   assert json.loads(json.dumps(doc)) == doc
+>>> test_json()
+Falsifying example: test_json(doc={'': nan})
+Traceback (most recent call last):
+  File "&lt;stdin&gt;", line 1, in &lt;module&gt;
+  File "&lt;stdin&gt;", line 2, in test_json
+  File "./hypothesis/core.py", line 583, in wrapped_test
+    print_example=True, is_final=True
+  File "./hypothesis/executors/executors.py", line 25, in default_executor
+    return function()
+  File "./hypothesis/core.py", line 365, in run
+    return test(*args, **kwargs)
+  File "&lt;stdin&gt;", line 3, in test_json
+AssertionError
+                </code></pre>
+            </section>
+            <section>
+                <h3>Поиск ошибок</h3>
+                <pre><code class=python data-trim>
+>>> @given(json_st.objects(json_st.values()),
+           settings=Settings(verbosity=Verbosity.verbose))
+... def test_json(doc):
+...   assert json.loads(json.dumps(doc)) == doc
+...
+>>> test_json()
+                </code></pre>
+            </section>
+            <section>
+                <h3>Поиск ошибок</h3>
+                <pre><code class=python data-trim>
+Trying example: test_json(doc={})
+Trying example: test_json(doc={'': True})
+Trying example: test_json(doc={'': None})
+Trying example: test_json(doc={'': False})
+Trying example: test_json(doc={'': -43203256341979896423482879160843})
+Trying example: test_json(doc={'': 24})
+Trying example: test_json(doc={'': 9})
+...
+Trying example: test_json(doc={'': 397})
+Trying example: test_json(doc={'': 100440})
+Trying example: test_json(doc={'': 30323947834323202215971170911015})
+Trying example: test_json(doc={'': 0.0})
+Trying example: test_json(doc={'': inf})
+Trying example: test_json(doc={'': -inf})
+Successfully shrunk example 27 times
+Falsifying example: test_json(doc={'': nan})
+                </code></pre>
+            </section>
+            <section>
+                <h3>Генерация данных</h3>
+                <pre><code class=python data-trim>
+import math
+from hypothesis import strategies as st
+
+def nulls(): return st.none()
+def booleans(): return st.booleans()
+def numbers(): return st.integers() | st.floats().filter(math.isfinite)
+def strings(): return st.text()
+def arrays(elements): return st.lists(elements)
+def objects(elements): return st.dictionaries(strings(), elements)
+def values():
+    simple_values = nulls() | booleans() | numbers() | strings()
+    return (simple_values
+            | st.recursive(simple_values,
+                           lambda children: arrays(children)
+                                            | objects(children)))
+</code></pre>
+            </section>
+            <section>
+                <h3>База примеров</h3>
+                <p>Hypothesis сохраняет найденные ошибки в SQLite базу для
+                   последующего воспроизведения.</p>
+            </section>
+            <section>
+                <h3>База примеров</h3>
+                <h5>(альтернативная реализация)</h5>
+                <pre>
+
+ +-------------+   replication   +-------------+   store   +-----------+
+ |  CouchDB A  | <-------------> |  CouchDB B  | <-------> | CI server |
+ +-------------+                 +-------------+           +-----------+
+   ^                                         ^
+   | store                             store |
+   v                                         v
+ +-------------+                 +-------------+
+ | Developer A |                 | Developer B |
+ +-------------+                 +-------------+
+
+                </pre>
+                <h5>https://github.com/DRMacIver/hypothesis/issues/178</h5>
+            </section>
+            <section>
+                <h3>Профили и настройки</h3>
+                <pre><code class=python data-trim>
+>>> from hypothesis import Settings
+>>> Settings.register_profile("ci", Settings(max_examples=1000))
+>>> Settings.register_profile("dev", Settings(max_examples=10))
+>>> Settings.register_profile("debug", Settings(max_examples=10, verbosity=Verbosity.verbose))
+>>> Settings.load_profile(os.getenv(u'HYPOTHESIS_PROFILE', 'default'))
+</code></pre>
+            </section>
+            <section>
+                <h3>Что хорошо тестируется</h3>
+                <ul>
+                    <li>Структуры данных любой сложности</li>
+                    <li>Реализации протоколов, парсеров, базы данных</li>
+                    <li>Любые чистые функции</li>
+                    <li>Детерминированные API</li>
+                </ul>
+            </section>
+        </section>
+        <section data-background="#000000">
+            <section>
+                <img src="img/itgm-6-0.jpeg">
+            </section>
+            <section>
+                <img src="img/itgm-6-1.jpeg">
+            </section>
+            <section>
+                <img src="img/itgm-6-2.jpeg">
+            </section>
+            <section>
+                <img src="img/itgm-6-3.png">
+            </section>
+            <section>
+                <img src="img/itgm-6-4.jpeg">
+            </section>
+        </section>
+        <section>
+            <h3>Полезные ссылки</h3>
+            <ul>
+                <li>Hypothesis<br/>
+                    https://github.com/DRMacIver/hypothesis</li>
+                <li>Hypothesis Talks<br/>
+                    https://github.com/DRMacIver/hypothesis-talks</li>
+                <li>Conjecture<br/>
+                    https://github.com/DRMacIver/conjecture</li>
+                <li>PYCON UK 2015: Finding more bugs with less work<br/>
+                    https://www.youtube.com/watch?v=62ubHXzD8tM</li>
+                <li>How I handled Erlang R18 Maps with QuickCheck<br/>
+                    https://vimeo.com/143849945</li>
+            </ul>
+        </section>
+        <section>
+            <h3>Спасибо за внимание!</h3>
+        </section>
+    </div>
+</div>
+
+<script src="js/head.min.js"></script>
+<script src="js/reveal.js"></script>
+
+<script>
+
+    // Full list of configuration options available at:
+    // https://github.com/hakimel/reveal.js#configuration
+    Reveal.initialize({
+        controls: true,
+        progress: true,
+        history: true,
+        center: true,
+
+        transition: 'slide', // none/fade/slide/convex/concave/zoom
+
+        // Optional reveal.js plugins
+        dependencies: [
+            {
+                src: 'js/highlight.js',
+                async: true,
+                callback: function () {
+                    hljs.initHighlightingOnLoad();
+                }
+            },
+            {src: 'js/zoom.js', async: true},
+        ]
+    });
+
+</script>
+
+</body>
+</html>

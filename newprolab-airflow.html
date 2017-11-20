@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="ru">
+
+<head>
+  <meta charset="utf-8">
+
+  <title>Data Engineer 1.0: Airflow.</title>
+
+  <meta name="description"
+        content="">
+  <meta name="author" content="Alexander Shorin">
+
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style"
+        content="black-translucent">
+
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, minimal-ui">
+
+  <link rel="stylesheet" href="css/reveal.css">
+  <link rel="stylesheet" href="css/serif.css" id="theme">
+
+  <!-- Code syntax highlighting -->
+  <link rel="stylesheet" href="css/zenburn.css">
+
+  <!-- Printing and PDF exports -->
+  <script>
+      var link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.type = 'text/css';
+      link.href = window.location.search.match(/print-pdf/gi) ? 'css/pdf.css' : 'css/paper.css';
+      document.getElementsByTagName('head')[0].appendChild(link);
+  </script>
+
+  <!--[if lt IE 9]>
+  <script src="js/html5shiv.js"></script>
+  <![endif]-->
+  <style>
+    img {
+      border: 0 !important;
+      box-shadow: 0 0 0 !important;
+    }
+
+  </style>
+</head>
+
+<body>
+
+<div class="reveal">
+  <div class="slides">
+    <section>
+      <h2>Airflow</h2>
+      <img src="img/airflow.png" style="height: 30%; width: 30%">
+
+      <p>
+        <small>
+          Шорин Александр / <a href="http://github.com/kxepal">@kxepal</a>
+        </small>
+      </p>
+    </section>
+
+    <section>
+      <h3>План</h3>
+      <ul>
+        <li>Познакомиться с Airflow</li>
+        <li>Понять базовые концепции</li>
+        <li>Пройти небольшой tutorial</li>
+        <li>Поделиться опытом из продакшена</li>
+      </ul>
+      <p>Чего не будет: пересказа документации</p>
+    </section>
+
+    <section>
+      <h3>Что такое Airflow?</h3>
+      <ul>
+        <li>Система распределенного выполения графа задач</li>
+        <li>Разаработа в AirBnB</li>
+        <li>В 2016г. передана в Apache Software Foundation</li>
+        <li>Написана на Python с использованием популярных библиотек</li>
+        <li>Развивается сообществом</li>
+        <li>Используется AirBnB, Yahoo!, Spotify, Mail.ru, PayPal, Quora,
+          Stripe ... сотни их!</li>
+      </ul>
+    </section>
+
+    <section>
+      <h3>Почему Airflow?</h3>
+      <ul>
+        <li>Задачи описываются на Python, нет никаких XML</li>
+        <li>Приятный Web UI</li>
+        <li>Отчеты и логи задач</li>
+        <li>Мониторинг и алертинг</li>
+        <li>Микросервисная архитектура легко масштабируется</li>
+        <li>Большое количество батареек в коробке для работы с Hive, Spark,
+        Druid, Jira, Slack, Vertica, MySQL, Redis etc.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h3>Рамблер / Airflow </h3>
+      <ul>
+        <li>Заменил самописную систему на cron</li>
+        <li>Два года в продакшене</li>
+        <li>60+ DAG</li>
+        <li>4250+ задач в день</li>
+        <li>Много радости и <strike>боли</strike> грусти</li>
+      </ul>
+    </section>
+
+    <section>
+      <h3>Концепции Airflow</h3>
+      <img src="img/airflow-dag.png">
+      <ul>
+        <li>DAG: Direct Acyclic Graph</li>
+        <li>Task:
+          <ul>
+            <li>Operator: задача, которая делает вещи</li>
+            <li>Sensor: задача, которая чего-то ждет</li>
+          </ul>
+        </li>
+      </ul>
+    </section>
+
+    <section>
+      <h3>Архитектура Airflow</h3>
+      <img src="img/airflow-arch.jpg">
+      <a href="https://www.slideshare.net/sumitmaheshwari007/apache-airflow">By Sumit Maheshwari</a>
+    </section>
+
+    <section>
+      <h3>Airflow Scheduler</h3>
+      <ul>
+        <li>Периодически сканирует dag_folder</li>
+        <li>Контролирует валидность состояний задач</li>
+        <li>Создает задания для worker`ов</li>
+      </ul>
+    </section>
+
+    <section>
+      <h3>Airflow Worker</h3>
+      <ul>
+        <li>Принимает задания на исполнения из указанных очередей</li>
+        <li>Контролирует выполнние оператора / сенсора</li>
+        <li>Результат пишет в базу данных</li>
+      </ul>
+    </section>
+
+    <section>
+      <h3>Airflow Serve Logs</h3>
+      <ul>
+        <li>Предоставляет доступ к локальным логам workerов по HTTP</li>
+        <li>Web-сервер обращается к нему за логами задачи</li>
+      </ul>
+    </section>
+
+    <section>
+      <h3>Airflow Webserver</h3>
+      <ul>
+        <li>Flask + Gunicorn</li>
+        <li>Обеспечивает доступ к админке</li>
+        <li>Поддерживает авторизацию и разделение DAGов по пользователям (owners)</li>
+        <li>RBAC TODO</li>
+        <li>Есть demo режим с read-only и защитой данных</li>
+      </ul>
+    </section>
+
+    <section>
+      <h3>Пример</h3>
+      <pre><code class=python style="max-height: 100%;">from airflow import DAG
+from airflow.operators import HiveOperator
+from airflow.operators.sensors import HdfsSensor
+from airflow.utils.dates import days_ago
+
+dag = DAG(
+    schedule_interval='@hourly',
+    start_date=days_ago(7),
+)
+await_logs = HdfsSensor('/logs/ad/{{ ds }}', dag=dag)
+create_partition = HiveOperator(
+    'ALTER TABLE ad_logs_raw ADD PARTITION(date={{ ds }})',
+    dag=dag
+)
+
+create_partition.set_upstream(await_logs)
+      </code></pre>
+    </section>
+
+    <section>
+      <h3>Connections</h3>
+      <img src="img/airflow-connections.png">
+    </section>
+
+    <section>
+      <h3>Пример</h3>
+      <pre><code class=python style="max-height: 100%;">from airflow import DAG
+from airflow.operators import BaseOperator
+from airflow.operators.sensors import BaseSensor
+from airflow.utils.dates import days_ago
+
+class CustomSensor(BaseSensor):
+    def poke(self, context: dict) -> bool:
+        return self.data_is_available(context['ds'])
+    def data_is_avaiable(self, date: str) -> bool:
+        ...
+
+class CustomOperator(BaseOperator):
+    def execute(self, context: dict):
+        ...
+
+dag = DAG(
+    schedule_interval='@daily',
+    start_date=days_ago(7),
+)
+
+custom_sensor = CustomSensor(dag=dag)
+custom_operator = CustomOperator(dag=dag)
+
+custom_operator.set_upstream(custom_sensor)</code></pre>
+    </section>
+
+    <section>
+      <h3>schedule interval</h3>
+      <img src="img/airflow-schedule-interval.jpg">
+    </section>
+
+    <section>
+      <h3>Статусы задач</h3>
+        <table>
+            <tr>
+                <td>QUEUED</td>
+                <td>задача помещена в очередь</td>
+            </tr>
+            <tr>
+                <td>SCHEDULED</td>
+                <td>задача принята воркером</td>
+            </tr>
+            <tr>
+                <td>RUNNING</td>
+                <td>задача выполняется</td>
+            </tr>
+            <tr>
+                <td>SUCCESS</td>
+                <td>задача успешно выполнена</td>
+            </tr>
+            <tr>
+                <td>FAILED</td>
+                <td>задача упала с ошибкой</td>
+            </tr>
+            <tr>
+                <td>SHUTDOWN</td>
+                <td>отправлен сигнал воркеру на завершние задачи</td>
+            </tr>
+            <tr>
+                <td>UP_FOR_RETRY</td>
+                <td>ожидается перезапуск</td>
+            </tr>
+        </table>
+    </section>
+
+    <section>
+      <h2>Tutorial</h2>
+      <a href="https://goo.gl/TtV2WM">https://goo.gl/TtV2WM</a>
+      <p>
+        Hint: pip install apache-airflow
+      </p>
+    </section>
+
+    <section>
+      <h2>Airflow в продакшене</h2>
+    </section>
+
+    <section>
+      <h3>Магические комментарии</h3>
+      <ul>
+        <li>Проблема: <p>Airflow не видит DAG</p></li>
+        <li>Решение:
+          <ul>
+            <li>Файл с дагом должен находиться в dag_folder</li>
+            <li>Файл содержит слова DAG и airflow</li>
+          </ul>
+        </li>
+      </ul>
+    </section>
+
+    <section>
+      <h3>Чек-лист: не запускается задача</h3>
+      <ul style="line-height: 1.7em !important;">
+        <li>[ ] - Проверить логи scheduler, что задание на запуск выдается;</li>
+        <li>[ ] - Проверить, что у задачи корректная очередь (queue) и есть worker её обслуживающий;</li>
+        <li>[ ] - Проверить в flower что worker отвечает на полученное задание;</li>
+        <li>[ ] - Запустить задачу локально (airflow run ...) под те же окружением;</li>
+      </ul>
+    </section>
+
+    <section>
+      <h3>Airflow Webserver</h3>
+      <ul>
+        <li>Проблема: <p>добавили / удалили / изменили даг, в UI ничего не изменилось</p></li>
+        <li>Решение: <p>перезапуск web-сервера после каждого изменения в дагах</p></li>
+      </ul>
+    </section>
+
+    <section>
+      <h3>Airflow + PgBouncer</h3>
+      <ul>
+        <li>Проблема: <p>Быстрое исчерпание доступных соединений, приводящее к зависаниям всего</p></li>
+        <li>Решение:
+          <ul>
+          <li>Мониторинг и алертинг</li>
+          <li>Но может оказаться, что это утечка соединений из-за idle транзакций</li>
+        </ul>
+      </ul>
+    </section>
+
+    <section>
+      <h3>Sensors Deadlock</h3>
+      <ul>
+        <li>Проблема: <p>что-то сломалось, данные не доезжали день-два, проблема устанена, задачи не запускаются</p></li>
+        <li>Решение:
+        <ul>
+          <li>Алертинг</li>
+          <li>Настройка execution_timeout (не путать с timeout!)</li>
+          <li>Ручное вмешательство</li>
+          <li>Лучше иметь две очереди под сенсоры: критические и прочие;</li>
+        </ul>
+        </li>
+      </ul>
+    </section>
+
+    <section>
+      <h3>Connections и SD / HA сервисы</h3>
+      <ul>
+        <li>Проблема: <p>настроить работу штатных операторов / сенсоров с HA сервисами (Hadoop Namenode, Hive metastore, etc)</p></li>
+        <li>Решение:
+        <ul>
+          <li>Ставить балансер перед каждым HA сервисом;</li>
+          <li>Помещать HA сервисы за общим DNS адресом;</li>
+          <li>Периодически обновлять Сonnections через DB;</li>
+          <li>Не пользоваться Connections впринципе.</li>
+        </ul>
+        </li>
+      </ul>
+    </section>
+
+    <section>
+      <h3>DAG as a Code</h3>
+      <ul>
+        <li>Проблема:
+        <ul>
+          <li>Необходим статический анализ дагов;</li>
+          <li>Cложно понять какой даг получится;</li>
+          <li>Хочется абстрагироваться от Airflow;</li>
+        </ul>
+        </li>
+        <li>Решение: <p>https://pypi.python.org/pypi/airflow-declarative</p></li>
+      </ul>
+    </section>
+
+    <section>
+      <pre><code class=python style="max-height: 100%;">args = {
+    'owner': 'airflow',
+    'start_date': airflow.utils.dates.days_ago(2)
+}
+
+dag = DAG(
+    dag_id='example_bash_operator', default_args=args,
+    schedule_interval='0 0 * * *',
+    dagrun_timeout=timedelta(minutes=60))
+
+run_this = BashOperator(
+    task_id='run_after_loop', bash_command='echo 1', dag=dag)
+run_this.set_downstream(run_this_last)
+
+for i in range(3):
+    i = str(i)
+    task = BashOperator(
+        task_id='runme_'+ i,
+        bash_command='echo "{{ task_instance_key_str }}" && sleep 1',
+        dag=dag)
+    task.set_downstream(run_this)
+      </code></pre>
+    </section>
+
+    <section>
+      <pre><code class=python style="max-height: 100%;">args = {
+    'owner': 'airflow',
+    'start_date': airflow.utils.dates.days_ago(2)
+}
+
+dag = DAG(
+    dag_id='example_bash_operator', default_args=args,
+    schedule_interval='0 0 * * *',
+    dagrun_timeout=timedelta(minutes=60))
+
+run_this = BashOperator(
+    task_id='run_after_loop', bash_command='echo 1', dag=dag)
+run_this.set_downstream(run_this_last)
+
+for i in range(3):
+    i = str(i)
+    task = BashOperator(
+        task_id='runme_'+ i,
+        bash_command='echo "{{ task_instance_key_str }}" && sleep 1',
+        dag=dag)
+    task.set_downstream(run_this)
+      </code></pre>
+    </section>
+
+    <section>
+      <h3>Эволюция программиста</h3>
+      <img src="img/code-is-data.png">
+    </section>
+
+    <section>
+      <pre><code class=yaml style="max-height: 100%;">dags:
+  example_bash_operator:
+    args:
+      dagrun_timeout: 1h
+      default_args:
+        owner: airflow
+      start_date: 2017-07-27
+      schedule_interval: 1d
+    do:
+    - operators:
+        runme_{{ item }}:
+          class: airflow.operators.bash_operator:BashOperator
+          args:
+            bash_command: >
+              {% raw %}
+              echo "{{ task_instance_key_str }}" && sleep 1
+              {% endraw %}
+      flow:
+        runme_{{ item }}:
+        - run_after_loop
+      with_items: [0, 1, 2]
+    operators:
+      run_after_loop:
+        class: airflow.operators.bash_operator:BashOperator
+        args:
+          bash_command: echo 1
+      </code></pre>
+    </section>
+
+    <section>
+      <h3>Спасибо за внимание!</h3>
+      <h3>Спрашивайте свои ответы!</h3>
+    </section>
+  </div>
+</div>
+
+<script src="js/head.min.js"></script>
+<script src="js/reveal.js"></script>
+
+<script>
+
+    // Full list of configuration options available at:
+    // https://github.com/hakimel/reveal.js#configuration
+    Reveal.initialize({
+        controls: true,
+        progress: true,
+        history: true,
+        center: true,
+
+        transition: 'slide', // none/fade/slide/convex/concave/zoom
+
+        // Optional reveal.js plugins
+        dependencies: [
+            {
+                src: 'js/highlight.js',
+                async: true,
+                callback: function () {
+                    hljs.initHighlightingOnLoad();
+                }
+            },
+            {src: 'js/zoom.js', async: true}
+        ]
+    });
+
+</script>
+
+</body>
+</html>

@@ -4,7 +4,7 @@
 <head>
   <meta charset="utf-8">
 
-  <title>Data Engineer 1.0: Airflow.</title>
+  <title>Data Engineer 2.0: Airflow.</title>
 
   <meta name="description"
         content="">
@@ -100,9 +100,9 @@
       <h3>Рамблер / Airflow </h3>
       <ul>
         <li>Заменил самописную систему на cron</li>
-        <li>Два года в продакшене</li>
+        <li>Три года в продакшене</li>
         <li>60+ DAG</li>
-        <li>4250+ задач в день</li>
+        <li>34315+ задач в день</li>
         <li>Много радости и <strike>боли</strike> грусти</li>
       </ul>
     </section>
@@ -339,6 +339,14 @@ custom_operator.set_upstream(custom_sensor)</code></pre>
           <li>Не пользоваться Connections впринципе.</li>
         </ul>
         </li>
+      </ul>
+    </section>
+
+    <section>
+      <h3>Не используйте Redis для очередей</h3>
+      <ul>
+        <li>Redis не предназначен для серьезных очередей (см visibility timeout)</li>
+        <li>Решение: используйте RabbitMQ</li>
       </ul>
     </section>
 
